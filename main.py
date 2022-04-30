@@ -86,13 +86,14 @@ if __name__ == "__main__":
     print(f"Here is your athlete:\n{pprint.pformat(athlete_data)}")
     storage.store_athlete(athlete_data, args.id)
     print("Refreshing activities. These are your new activities:")
-    for activity in sclient.get_activities(token["access_token"]):
-        cached_activity = storage.get_activity(activity["id"], args.id)
-        if not cached_activity:
-            log.info(f"Activity '{activity['name']}' ({activity['id']}) not found in cache.")
-            full_activity = sclient.get_activity_detailed(token["access_token"], activity['id'])
-            storage.store_activity(full_activity, args.id)
-            print(f"'{activity['name']}' ({activity['id']})")
-        else:
-            log.info(f"Activity '{activity['name']}' ({activity['id']}) found in cache!")
+    with storage:
+        for activity in sclient.get_activities(token["access_token"]):
+            cached_activity = storage.get_activity(activity["id"], args.id)
+            if not cached_activity:
+                log.info(f"Activity '{activity['name']}' ({activity['id']}) not found in cache.")
+                full_activity = sclient.get_activity_detailed(token["access_token"], activity['id'])
+                storage.store_activity(full_activity, args.id)
+                print(f"'{activity['name']}' ({activity['id']})")
+            else:
+                log.info(f"Activity '{activity['name']}' ({activity['id']}) found in cache!")
 

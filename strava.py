@@ -90,7 +90,7 @@ class StravaClient:
         headers = {"Authorization": f"Bearer {token}"}
         params = {}
         for activity in self._paginated_results(url, headers, params):
-            yield self.get_activity_detailed(token, activity["id"])
+            yield activity
 
     def get_activity_detailed(self, token: str, activity_id: str) -> dict:
         url = f"{STRAVA_API_URL}/activities/{activity_id}"
