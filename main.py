@@ -3,10 +3,14 @@ import argparse
 import os
 import datetime
 import pprint
+from typing import Generator
 from urllib.parse import urlparse, parse_qs
+import re
 
 from strava import StravaClient
 from storage import SqliteStorage
+from google_sheets import GoogleSheetClient
+import pandas
 
 log = logging.getLogger()
 
@@ -55,22 +59,47 @@ def refresh_token(user_id: str) -> tuple[int, str, dict]:
     """
     log.info("Refreshing token...")
     (athlete_id, scope, refresh_token) = storage.lookup_refresh_token(user_id)
-    token_data = sclient.refresh_token(refresh_token['code'])
+    token_data = sclient.refresh_token(refresh_token['refresh_token'])
     storage.store_token(user_id, athlete_id, token_data, scope)
     return storage.lookup_access_token(user_id)
 
 
-if __name__ == "__main__":
-    argparser = argparse.ArgumentParser(description="Run straavaldi.")
-    argparser.add_argument("-v", "--verbose", required=False, help="Enable verbose logging")
-    argparser.add_argument("-i", "--id", required=False, default=os.getenv("DEFAULT_ACCOUNT_ID"),
-                           help=f"Account id. Default: {os.getenv('DEFAULT_ACCOUNT_ID')}")
-    args = argparser.parse_args()
-    loglevel = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                        level=loglevel)
-    sclient = StravaClient(client_id=os.getenv("STRAVA_CLIENT_ID"), client_secret=os.getenv("STRAVA_CLIENT_SECRET"))
-    storage = SqliteStorage(os.getenv("STORAGE_DB"), os.getenv("STORAGE_SCHEMA_FILE"))
+def get_timeline_events() -> Generator[dict, None, None]:
+    gsheet_client = GoogleSheetClient(os.getenv("GOOGLE_TOKEN_FILE"), os.getenv("GOOGLE_CREDS_FILE"))
+    gsheet_client.authenticate()
+    for record in gsheet_client.read_from_sheet(os.getenv("GOOGLE_SPREADSHEET_ID"), "Blad1"):
+        if record["Event"]:
+            event = {"type": "event"}
+            event["timestamp"] = datetime.datetime.strptime(f"{record['Day']} {record['Time']}", "%d-%m-%Y %H:%M")
+            event["name"] = record["Event"]
+            event["description"] = record["description"]
+            yield event
+
+
+def get_strava_activities(user_id: str) -> Generator[dict, None, None]:
+    selection = ["id", "name", "distance", "moving_time",
+                 "elapsed_time", "total_elevation_gain", "type",
+                 "start_date", "start_latlng", "average_speed",
+                 "average_temp", "average_cadence", "calories",
+                 "description", "average_heartrate", "max_heartrate",
+                 "suffer_score"]
+    for record in storage.get_activities(user_id):
+        priv_note = record.get("private_note", "")
+        pains = {}
+        matches = None
+        try:
+            if priv_note:
+                matches = re.findall(r"(.+):(.+)", priv_note)
+            if matches:
+                pains = {f"pains.{m[0].lower()}": float(m[1]) for m in matches}
+        except Exception as err:
+            log.error(f"Exception during activities parsing: {err}")
+        activity = {k: v for k, v in record.items() if k in selection}
+        activity.update(pains)
+        yield activity
+
+
+def update_strava_activities() -> None:
     token_data = storage.lookup_access_token(args.id)
     if not token_data:
         log.info(f"No access token found for {args.id}.")
@@ -97,3 +126,24 @@ if __name__ == "__main__":
             else:
                 log.info(f"Activity '{activity['name']}' ({activity['id']}) found in cache!")
 
+
+if __name__ == "__main__":
+    argparser = argparse.ArgumentParser(description="Run straavaldi.")
+    argparser.add_argument("-u", "--update", required=False, action="store_true",
+                           help="Update the Strava activites cache.")
+    argparser.add_argument("-v", "--verbose", required=False, help="Enable verbose logging.")
+    argparser.add_argument("-i", "--id", required=False, default=os.getenv("DEFAULT_ACCOUNT_ID"),
+                           help=f"Account id. Default: {os.getenv('DEFAULT_ACCOUNT_ID')}")
+    args = argparser.parse_args()
+    loglevel = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                        level=loglevel)
+
+    sclient = StravaClient(client_id=os.getenv("STRAVA_CLIENT_ID"), client_secret=os.getenv("STRAVA_CLIENT_SECRET"))
+    storage = SqliteStorage(os.getenv("STORAGE_DB"), os.getenv("STORAGE_SCHEMA_FILE"))
+
+    if args.update:
+        update_strava_activities()
+    else:
+        dataframe = pandas.DataFrame.from_records(get_strava_activities(args.id))
+        print(dataframe.to_csv())

@@ -1,11 +1,11 @@
 CREATE TABLE activities
 (id INTEGER PRIMARY KEY,
+start INTEGER NOT NULL,
 private_note TEXT,
 description TEXT,
 name TEXT,
 type TEXT,
 user_id TEXT NOT NULL,
-last_updated INTEGER NOT NULL,
 raw TEXT NOT NULL);
 
 CREATE TABLE athletes

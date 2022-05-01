@@ -58,14 +58,14 @@ class SqliteStorage:
     def store_activity(self, activity: dict, user_id: str) -> str:
         cur = self._get_curs()
         values = (activity["id"],
+                  datetime.datetime.strptime(activity["start_date"], "%Y-%m-%dT%H:%M:%SZ").timestamp(),
                   activity.get("private_note", None),
                   activity.get("description", None),
                   activity.get("name", None),
                   activity.get("type", None),
                   user_id,
-                  datetime.datetime.now().timestamp(),
                   json.dumps(activity))
-        cur.execute("INSERT INTO activities (id, private_note, description, name, type, user_id, last_updated, raw) "
+        cur.execute("INSERT INTO activities (id, start, private_note, description, name, type, user_id, raw) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
                         , values)
         log.debug(f"Activity inserted @{cur.lastrowid}: '{activity['name']}' ({activity['id']})")
@@ -83,18 +83,18 @@ class SqliteStorage:
         self._close_curs(cur)
         return athlete["id"]
 
-    def get_activities(self, user_id: str) -> Generator[tuple[dict, int], None, None]:
+    def get_activities(self, user_id: str) -> Generator[dict, None, None]:
         """
         Generator for iterating over the stored activities.
         :return:
         """
 
         cur = self._get_curs()
-        for row in cur.execute("SELECT * FROM activities WHERE user_id=?", user_id):
-            yield json.loads(row["raw"]), row["last_updated"]
+        for row in cur.execute("SELECT * FROM activities WHERE user_id=?", (user_id,)):
+            yield json.loads(row["raw"])
         self._close_curs(cur)
 
-    def get_activity(self, activity_id: str, user_id: str) -> (dict, int):
+    def get_activity(self, activity_id: str, user_id: str) -> dict:
         """
         Retrieve an activity based on the id or return None
         :param activity_id:
@@ -107,7 +107,7 @@ class SqliteStorage:
         if not row:
             return None
         else:
-            return json.loads(row["raw"]), row["last_updated"]
+            return json.loads(row["raw"])
 
     def lookup_access_token(self, user_id: str) -> tuple[int, str, dict]:
         cur = self._get_curs()
@@ -124,7 +124,7 @@ class SqliteStorage:
         row = cur.fetchone()
         if not row:
             return None
-        self._close_curs()
+        self._close_curs(cur)
         return row['athlete_id'], row['scope'], json.loads(row['raw'])
 
     def store_token(self, user_id: str, athlete_id: int, token_data: dict, scope: str) -> None:
@@ -138,10 +138,10 @@ class SqliteStorage:
         """
         cur = self._get_curs()
         values = (user_id, athlete_id, token_data['refresh_token'], scope, json.dumps(token_data))
-        cur.execute("INSERT INTO refresh_tokens (user_id, athlete_id, token, scope, raw) VALUES (?, ?, ?, ?, ?)",
-                    values)
+        cur.execute("INSERT OR REPLACE INTO refresh_tokens (user_id, athlete_id, token, scope, raw) "
+                    "VALUES (?, ?, ?, ?, ?)", values)
         values = (user_id, athlete_id, token_data['expires_at'], token_data['refresh_token'], scope, json.dumps(token_data))
-        cur.execute("INSERT INTO access_tokens (user_id, athlete_id, expires_at, token, scope, raw) "
+        cur.execute("INSERT OR REPLACE INTO access_tokens (user_id, athlete_id, expires_at, token, scope, raw) "
                     "VALUES (?, ?, ?, ?, ?, ?)", values)
         log.info(f"New tokens stored for {user_id}: {token_data}")
         self._close_curs(cur)

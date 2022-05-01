@@ -7,7 +7,7 @@ from typing import Generator
 log = logging.getLogger(__name__)
 
 STRAVA_API_URL = "https://www.strava.com/api/v3"
-PAGE_SIZE = 50
+PAGE_SIZE = 200
 
 
 class StravaClient:
